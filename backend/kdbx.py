@@ -91,6 +91,25 @@ def _ticks_now():
     return base64.b64encode(struct.pack("<Q", secs)).decode("ascii")
 
 
+def _ticks_to_unix(text):
+    """Inverse of _ticks_now(); also accepts KDBX3-style ISO strings.
+    Returns seconds since the Unix epoch, or 0 when unknown."""
+    if not text:
+        return 0
+    try:
+        raw = base64.b64decode(text)
+        if len(raw) == 8:
+            secs = struct.unpack("<Q", raw)[0]
+            return max(0, secs - 62135596800)   # 0001-01-01 -> 1970-01-01
+    except Exception:
+        pass
+    try:
+        dt = datetime.strptime(text.strip(), "%Y-%m-%dT%H:%M:%SZ")
+        return int(dt.replace(tzinfo=timezone.utc).timestamp())
+    except Exception:
+        return 0
+
+
 # ------------------------------------------------------------ VariantDictionary
 
 def _vd_parse(data):
@@ -608,6 +627,9 @@ class KdbxDatabase:
             "url": self._get(e, "URL"),
             "notes": self._get(e, "Notes"),
             "category": PATH_SEP.join(path) if path else GENERAL,
+            "modified": _ticks_to_unix(
+                (e.find("Times/LastModificationTime").text
+                 if e.find("Times/LastModificationTime") is not None else "")),
         }
 
     def entries(self):

@@ -42,7 +42,23 @@ Page {
                 Binding {
                     target: darkSwitch
                     property: "checked"
-                    value: mainView ? (mainView.themeName === darkTheme || mainView.bitwarden) : false
+                    value: mainView ? (mainView.themeName === darkTheme || mainView.bitwarden || mainView.aegis) : false
+                }
+            }
+        }
+
+        // Name shown in the greeting of the Aegis home screen
+        ListItem {
+            height: nameLayout.height + divider.height
+            ListItemLayout {
+                id: nameLayout
+                title.text: i18n.tr("Display name")
+                subtitle.text: i18n.tr("Shown in the greeting (Aegis theme)")
+                TextField {
+                    SlotsLayout.position: SlotsLayout.Trailing
+                    width: units.gu(16)
+                    text: mainView ? mainView.displayName : ""
+                    onTextChanged: if (mainView && activeFocus) mainView.displayName = text
                 }
             }
         }

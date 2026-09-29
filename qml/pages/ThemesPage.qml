@@ -17,7 +17,8 @@ Page {
     readonly property var themes: [
         { label: "Ambiance (light)", name: "Lomiri.Components.Themes.Ambiance" },
         { label: "Suru Dark",        name: "Lomiri.Components.Themes.SuruDark" },
-        { label: "Bitwarden",        name: "Bitwarden" }
+        { label: "Bitwarden",        name: "Bitwarden" },
+        { label: "Aegis",            name: "Aegis" }
     ]
 
     header: PageHeader {

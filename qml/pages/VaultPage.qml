@@ -20,9 +20,15 @@ Page {
     // True when the "Bitwarden" theme is active: header actions move to the
     // floating bottom bar / round button and the list becomes a rounded card.
     readonly property bool bw: mainView ? mainView.bitwarden : false
-    property string searchQuery: bw ? bwSearch.text : searchField.text
+    readonly property bool aegis: mainView ? mainView.aegis : false
+    property var overview: ({ total: 0, atRisk: 0, secure: 0, categories: [], recent: [] })
+    property bool showAll: false      // Aegis: "Passwords" tab = full list
+    property string categoryFilter: ""
+    property string searchQuery: aegis ? aegisHome.query : (bw ? bwSearch.text : searchField.text)
+    onSearchQueryChanged: refresh()
 
     BitwardenColors { id: bwc }
+    AegisColors { id: ac }
 
     Action {
         id: lockAction
@@ -54,11 +60,12 @@ Page {
 
     header: PageHeader {
         id: pageHeader
-        title: vaultPage.bw ? "" : i18n.tr("Vault")
-        leadingActionBar.actions: vaultPage.bw ? [] : [lockAction]
-        trailingActionBar.actions: vaultPage.bw ? [] : [addAction, generatorAction, settingsAction]
+        title: (vaultPage.bw || vaultPage.aegis) ? "" : i18n.tr("Vault")
+        leadingActionBar.actions: (vaultPage.bw || vaultPage.aegis) ? [] : [lockAction]
+        trailingActionBar.actions: (vaultPage.bw || vaultPage.aegis) ? [] : [addAction, generatorAction, settingsAction]
         StyleHints {
-            backgroundColor: vaultPage.bw ? bwc.background : theme.palette.normal.background
+            backgroundColor: vaultPage.aegis ? ac.background
+                             : (vaultPage.bw ? bwc.background : theme.palette.normal.background)
         }
     }
 
@@ -77,6 +84,9 @@ Page {
             case "entry-detail-result":
                 pageStack.push(Qt.resolvedUrl("AddEditEntryPage.qml"),
                                 { python: python, existingEntry: data[1] });
+                break;
+            case "overview-result":
+                overview = data[1];
                 break;
             case "entry-saved":
             case "entry-deleted":
@@ -128,12 +138,16 @@ Page {
 
     function refresh() {
         python.call("vault_backend.list_entries", [vaultPage.searchQuery || ""]);
+        if (aegis) python.call("vault_backend.get_overview", []);
     }
+    onAegisChanged: refresh()
+    // Refresh the home screen when coming back from another page
+    onActiveChanged: if (active && aegis) refresh()
 
     Component.onCompleted: refresh()
 
     Column {
-        visible: !vaultPage.bw
+        visible: !vaultPage.bw && !vaultPage.aegis
         anchors { left: parent.left; right: parent.right; top: pageHeader.bottom }
         spacing: 0
 
@@ -425,6 +439,140 @@ Page {
         }
     }
 
+
+    // ---------------------------------------------------------------
+    // "Aegis" layout (only visible with the "Aegis" theme)
+    // ---------------------------------------------------------------
+    Item {
+        id: aegisContent
+        visible: vaultPage.aegis
+        anchors { left: parent.left; right: parent.right; top: pageHeader.bottom; bottom: parent.bottom }
+        property bool listMode: vaultPage.showAll || vaultPage.categoryFilter !== "" || aegisHome.query.length > 0
+
+        AegisHome {
+            id: aegisHome
+            anchors.fill: parent
+            visible: !aegisContent.listMode
+            overview: vaultPage.overview
+            userName: mainView ? mainView.displayName : ""
+            onAddRequested: addAction.trigger()
+            onEntryClicked: python.call("vault_backend.get_entry", [uuid])
+            onCategoryClicked: { vaultPage.categoryFilter = name; }
+        }
+
+        // Full list: "Passwords" tab, a tapped category, or an active search
+        Item {
+            anchors.fill: parent
+            visible: aegisContent.listMode
+
+            Rectangle {
+                id: aSearch
+                anchors { left: parent.left; right: parent.right; top: parent.top
+                          leftMargin: units.gu(2); rightMargin: units.gu(2); topMargin: units.gu(1) }
+                height: units.gu(6); radius: units.gu(1.2)
+                color: ac.field; border.width: units.dp(1); border.color: ac.border
+                Icon { id: aIcon; anchors { left: parent.left; leftMargin: units.gu(1.5); verticalCenter: parent.verticalCenter }
+                       width: units.gu(2.4); height: width; name: "find"; color: ac.secondaryText }
+                TextInput {
+                    anchors { left: aIcon.right; leftMargin: units.gu(1); right: parent.right; rightMargin: units.gu(1); verticalCenter: parent.verticalCenter }
+                    color: ac.text; selectionColor: ac.accent; font.pixelSize: units.gu(1.9); clip: true
+                    text: aegisHome.query
+                    onTextChanged: if (activeFocus) aegisHome.query = text
+                }
+            }
+            Label {
+                id: aTitle
+                anchors { left: parent.left; leftMargin: units.gu(2.5); top: aSearch.bottom; topMargin: units.gu(1.5) }
+                text: (vaultPage.categoryFilter !== "" ? vaultPage.categoryFilter : i18n.tr("Passwords")) + " (" + aegisList.count + ")"
+                font.bold: true; color: ac.text
+            }
+            Label {
+                anchors { right: parent.right; rightMargin: units.gu(2.5); verticalCenter: aTitle.verticalCenter }
+                visible: vaultPage.categoryFilter !== ""
+                text: i18n.tr("Show all")
+                fontSize: "small"; color: ac.accentSoft
+                MouseArea { anchors.fill: parent; anchors.margins: -units.gu(1); onClicked: vaultPage.categoryFilter = "" }
+            }
+            Rectangle {
+                anchors { left: parent.left; right: parent.right; top: aTitle.bottom; bottom: parent.bottom
+                          leftMargin: units.gu(2); rightMargin: units.gu(2); topMargin: units.gu(1) }
+                radius: units.gu(1.5); color: ac.card
+                border.width: units.dp(1); border.color: ac.border
+                clip: true
+                ListView {
+                    id: aegisList
+                    anchors.fill: parent
+                    clip: true
+                    model: vaultPage.categoryFilter === "" ? entries
+                           : entries.filter(function (e) { return e.category === vaultPage.categoryFilter; })
+                    footer: Item { width: 1; height: units.gu(12) }
+                    delegate: BitwardenEntryItem {
+                        width: ListView.view ? ListView.view.width : 0
+                        order: index
+                        uuid: modelData.uuid
+                        title: modelData.title
+                        username: modelData.username
+                        category: modelData.category
+                        showDivider: index < aegisList.count - 1
+                        onEntryClicked: python.call("vault_backend.get_entry", [uuid])
+                        onEntryLongPressed: PopupUtils.open(quickCopyDialogComponent, vaultPage,
+                                                            { entryUuid: uuid, entryTitle: title, entryUsername: username })
+                    }
+                }
+            }
+        }
+
+        // Bottom navigation: Home / Passwords / Generator / Settings
+        Rectangle {
+            id: aNav
+            z: 5
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+            height: units.gu(8)
+            color: ac.nav
+            Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: units.dp(1); color: ac.border }
+
+            Repeater {
+                model: [
+                    { label: i18n.tr("Home"),      icon: "home",     tab: 0 },
+                    { label: i18n.tr("Passwords"), icon: "lock",     tab: 1 },
+                    { label: i18n.tr("Generator"), icon: "reload",   tab: 2 },
+                    { label: i18n.tr("Settings"),  icon: "settings", tab: 3 }
+                ]
+                delegate: Item {
+                    x: index * aNav.width / 4
+                    width: aNav.width / 4
+                    height: aNav.height
+                    property bool current: modelData.tab === 0 ? !aegisContent.listMode
+                                         : (modelData.tab === 1 && aegisContent.listMode)
+                    Rectangle {
+                        anchors { top: parent.top; horizontalCenter: parent.horizontalCenter }
+                        width: parent.width * 0.6; height: units.dp(2)
+                        color: ac.accent
+                        opacity: current ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 200 } }
+                    }
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: units.gu(0.4)
+                        Icon { anchors.horizontalCenter: parent.horizontalCenter; width: units.gu(3); height: width
+                               name: modelData.icon; color: current ? ac.accentSoft : ac.secondaryText }
+                        Label { anchors.horizontalCenter: parent.horizontalCenter; text: modelData.label
+                                fontSize: "x-small"; color: current ? ac.accentSoft : ac.secondaryText }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: {
+                            if (modelData.tab === 0) { vaultPage.showAll = false; vaultPage.categoryFilter = ""; aegisHome.query = ""; }
+                            else if (modelData.tab === 1) { vaultPage.showAll = true; vaultPage.categoryFilter = ""; }
+                            else if (modelData.tab === 2) generatorAction.trigger();
+                            else settingsAction.trigger();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Label {
         id: copiedNotice
         z: 20
@@ -442,7 +590,7 @@ Page {
         id: clearedNotice
         z: 20
         anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter
-                  bottomMargin: vaultPage.bw ? units.gu(13) : units.gu(2) }
+                  bottomMargin: vaultPage.aegis ? units.gu(10) : (vaultPage.bw ? units.gu(13) : units.gu(2)) }
         visible: false
         text: i18n.tr("Clipboard cleared")
         color: theme.palette.normal.backgroundSecondaryText

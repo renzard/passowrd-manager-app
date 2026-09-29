@@ -28,15 +28,21 @@ MainView {
     Settings {
         id: appSettings
         property string themeName: "Lomiri.Components.Themes.Ambiance"
+        property string displayName: ""
     }
+    property alias displayName: appSettings.displayName
     property string themeName: appSettings.themeName
 
     // "Bitwarden" is not a Lomiri theme of its own: it is Suru Dark plus custom
     // colours (themes/BitwardenColors.qml) and a Bitwarden-style vault layout.
     readonly property string bitwardenThemeName: "Bitwarden"
     readonly property bool bitwarden: themeName === bitwardenThemeName
-    theme.name: bitwarden ? "Lomiri.Components.Themes.SuruDark" : themeName
+    // "Aegis" is likewise Suru Dark plus themes/AegisColors.qml and its own home screen.
+    readonly property string aegisThemeName: "Aegis"
+    readonly property bool aegis: themeName === aegisThemeName
+    theme.name: (bitwarden || aegis) ? "Lomiri.Components.Themes.SuruDark" : themeName
     BitwardenColors { id: bwColors }
+    AegisColors { id: aegisColors }
 
     // Navy backdrop behind all pages when the Bitwarden theme is active
     Rectangle {
@@ -45,6 +51,15 @@ MainView {
         opacity: root.bitwarden ? 1 : 0
         visible: opacity > 0
         color: bwColors.background
+        Behavior on opacity { NumberAnimation { duration: 300 } }
+    }
+    // Near-black backdrop for the Aegis theme
+    Rectangle {
+        z: -1
+        anchors.fill: parent
+        opacity: root.aegis ? 1 : 0
+        visible: opacity > 0
+        color: aegisColors.background
         Behavior on opacity { NumberAnimation { duration: 300 } }
     }
     function setTheme(name) {

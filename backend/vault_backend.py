@@ -305,9 +305,50 @@ def list_entries(query=""):
         if query and query not in haystack.lower():
             continue
         results.append({k: e[k] for k in
-                        ("uuid", "title", "username", "url", "category")})
+                        ("uuid", "title", "username", "url", "category", "modified")})
     results.sort(key=lambda x: x["title"].lower())
     pyotherside.send("entries-list-result", results)
+
+
+def _is_weak(pw):
+    if len(pw) < 8:
+        return True
+    classes = sum(bool(x) for x in (
+        any(c.islower() for c in pw), any(c.isupper() for c in pw),
+        any(c.isdigit() for c in pw), any(not c.isalnum() for c in pw)))
+    return classes < 2
+
+
+def get_overview():
+    """Data for the "Aegis" home screen: counters, per-category counts and
+    the most recently changed entries. Passwords never leave the backend;
+    only the weak / reused flags are computed here."""
+    if not _unlocked:
+        _emit_error("get_overview", "vault-locked")
+        return
+    all_entries = _db.entries()
+    seen = {}
+    for e in all_entries:
+        pw = e.get("password") or ""
+        if pw:
+            seen[pw] = seen.get(pw, 0) + 1
+    at_risk = 0
+    cats = {}
+    for e in all_entries:
+        pw = e.get("password") or ""
+        if pw and (_is_weak(pw) or seen[pw] > 1):
+            at_risk += 1
+        cats[e["category"]] = cats.get(e["category"], 0) + 1
+    recent = sorted(all_entries, key=lambda x: x.get("modified", 0), reverse=True)[:5]
+    pyotherside.send("overview-result", {
+        "total": len(all_entries),
+        "atRisk": at_risk,
+        "secure": len(all_entries) - at_risk,
+        "categories": [{"name": k, "count": v} for k, v in
+                       sorted(cats.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
+        "recent": [{k: e[k] for k in ("uuid", "title", "username", "url",
+                                      "category", "modified")} for e in recent],
+    })
 
 
 def get_entry(uuid):

@@ -13,7 +13,7 @@ import "themes"
 MainView {
     id: root
     objectName: "mainView"
-    applicationName: "password-manager.yourdomain"
+    applicationName: "my-password-manager"
     automaticOrientation: true
 
     width: units.gu(45)

@@ -38,7 +38,7 @@ _db = None              # kdbx.KdbxDatabase while unlocked
 _vault_path = None
 _unlocked = False
 
-_FALLBACK_APP_NAME = "password-manager.yourdomain"
+_FALLBACK_APP_NAME = "my-password-manager"
 _VAULT_FILENAME = "vault.kdbx"
 _LEGACY_FILENAME = "vault.pmvault"
 LEGACY_MAGIC = "pmvault"

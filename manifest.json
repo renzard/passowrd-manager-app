@@ -1,6 +1,6 @@
 {
-  "name": "password-manager.yourdomain",
-  "version": "0.1.2",
+  "name": "my-password-manager",
+  "version": "0.1.3",
   "title": "Password Manager",
   "description": "A local, zero-knowledge password manager for Ubuntu Touch.",
   "framework": "ubuntu-sdk-20.04",

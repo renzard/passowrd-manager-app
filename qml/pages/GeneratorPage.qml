@@ -6,6 +6,11 @@ Page {
     id: generatorPage
     objectName: "generatorPage"
 
+    // Smooth fade + slide when this page opens or is returned to
+    opacity: transition.progress
+    transform: Translate { x: transition.offset }
+    PageTransition { id: transition }
+
     property var python
     // When opened from AddEditEntryPage to pick a password for the field.
     property bool pickMode: false

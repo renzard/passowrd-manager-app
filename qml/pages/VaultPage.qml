@@ -8,6 +8,11 @@ Page {
     id: vaultPage
     objectName: "vaultPage"
 
+    // Smooth fade + slide when this page opens or is returned to
+    opacity: transition.progress
+    transform: Translate { x: transition.offset }
+    PageTransition { id: transition }
+
     property var python
     property var mainView
     property var entries: []

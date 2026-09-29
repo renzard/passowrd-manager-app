@@ -1,10 +1,16 @@
 import QtQuick 2.7
 import Lomiri.Components 1.3
+import "../components"
 import Lomiri.Components.Popups 1.3
 
 Page {
     id: entryPage
     objectName: "addEditEntryPage"
+
+    // Smooth fade + slide when this page opens or is returned to
+    opacity: transition.progress
+    transform: Translate { x: transition.offset }
+    PageTransition { id: transition }
 
     property var python
     // When set, we're editing; otherwise we're creating a new entry.

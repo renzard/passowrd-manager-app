@@ -4,4 +4,4 @@
 #
 # Target packages needed on Ubuntu Touch/UBports:
 # python3-pyotherside
-# python3-cryptography   (AES-256-GCM + PBKDF2 for the vault file)
+# python3-cryptography   (AES, ChaCha20, HMAC for the KDBX vault)

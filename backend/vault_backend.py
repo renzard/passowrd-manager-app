@@ -3,56 +3,45 @@ vault_backend.py
 -----------------
 PyOtherSide backend bridge between the QML UI and the local vault.
 
-Design (KeePass-style, single portable encrypted file):
-  * Everything lives in ONE file on disk (default: vault.pmvault). That
-    file is a small JSON envelope containing a random salt, a random
-    nonce and an AES-256-GCM ciphertext. The ciphertext is the only
-    place the entries exist on disk, and it can only be opened with the
-    master password.
-  * The master password is never written to disk anywhere, in any form.
-    It is used to derive an AES-256 key with PBKDF2-HMAC-SHA256 (310,000
-    iterations) and a per-vault random salt. The derived key lives only
-    in memory (`_key`) while the vault is unlocked, and is dropped on
-    lock.
-  * Because the vault file is fully self-contained and fully encrypted,
-    it is portable by design: copy `vault.pmvault` off the device (to a
-    computer, SD card, cloud drive, etc.), wipe/format/reinstall, copy
-    the same file back into place (or use `import_vault` to copy it into
-    place from another location) and unlocking with the same master
-    password restores the exact same entries. Nothing else is needed.
-  * `export_vault` / `import_vault` are just safe file-copy helpers
-    around that same file, so the user doesn't need a terminal to make
-    or restore a backup.
+The vault is now a standard KeePass KDBX 4 database (see kdbx.py), so the
+very same file can be opened by KeePass / KeePassXC / KeePassDX on any
+device, and a database made in KeePass can be opened here.
+
+  * Everything lives in ONE file (default: vault.kdbx).
+  * The master password is never written to disk; the derived key only
+    lives in memory while the vault is unlocked.
+  * Every save is verified (decrypted again) before replacing the file,
+    and the previous version is kept next to it as vault.kdbx.bak.
+  * A legacy vault.pmvault from older versions of this app is migrated
+    to vault.kdbx automatically on first unlock (the old file is kept).
 """
 
 import os
+import sys
 import json
 import base64
-import secrets
 import shutil
 import threading
+
+_here = os.path.dirname(os.path.abspath(__file__))
+for _p in (os.path.join(_here, "vendor"), os.path.join(_here, "..", "vendor")):
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)   # optional vendored argon2-cffi
 
 import pyotherside
 
 from password_generator import generate_password
-
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-KDF_ITERATIONS = 310_000
-VAULT_MAGIC = "pmvault"
-VAULT_VERSION = 1
+import kdbx
 
 _lock = threading.Lock()
-_entries = []          # in-memory list of entry dicts, mirrors the decrypted vault
+_db = None              # kdbx.KdbxDatabase while unlocked
 _vault_path = None
-_key = None             # derived AES-256 key, only while unlocked; never persisted
 _unlocked = False
 
-
 _FALLBACK_APP_NAME = "password-manager.yourdomain"
-_VAULT_FILENAME = "vault.pmvault"
+_VAULT_FILENAME = "vault.kdbx"
+_LEGACY_FILENAME = "vault.pmvault"
+LEGACY_MAGIC = "pmvault"
 
 
 def _app_name():
@@ -114,10 +103,11 @@ def _default_vault_path():
     (so we keep finding it); otherwise use the first directory that we can
     genuinely write to."""
     candidates = _candidate_dirs()
-    for d in candidates:
-        path = os.path.join(d, _VAULT_FILENAME)
-        if os.path.isfile(path):
-            return path
+    for name in (_VAULT_FILENAME, _LEGACY_FILENAME):
+        for d in candidates:
+            path = os.path.join(d, name)
+            if os.path.isfile(path):
+                return path
     for d in candidates:
         if _dir_is_writable(d):
             return os.path.join(d, _VAULT_FILENAME)
@@ -137,24 +127,6 @@ def _emit_error(context, message):
     pyotherside.send("backend-error", context, str(message))
 
 
-def _derive_key(password, salt):
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=KDF_ITERATIONS,
-    )
-    return kdf.derive(password.encode("utf-8"))
-
-
-def _b64e(data):
-    return base64.b64encode(data).decode("ascii")
-
-
-def _b64d(data):
-    return base64.b64decode(data.encode("ascii"))
-
-
 def vault_exists(vault_path=None):
     """Whether a vault file has already been created on this device."""
     vault_path = vault_path or _default_vault_path()
@@ -163,134 +135,116 @@ def vault_exists(vault_path=None):
     return exists
 
 
-def _write_vault(vault_path, salt, key, entries):
-    """Encrypt `entries` with `key` and atomically overwrite the single
-    vault file. A fresh random nonce is used on every save (required for
-    AES-GCM safety) -- the salt (tied to the password/key) stays fixed
-    for the life of the vault."""
-    nonce = secrets.token_bytes(12)
-    plaintext = json.dumps({"entries": entries}).encode("utf-8")
-    ciphertext = AESGCM(key).encrypt(nonce, plaintext, None)
-    envelope = {
-        "magic": VAULT_MAGIC,
-        "version": VAULT_VERSION,
-        "kdf": "pbkdf2-sha256",
-        "iterations": KDF_ITERATIONS,
-        "salt": _b64e(salt),
-        "nonce": _b64e(nonce),
-        "ciphertext": _b64e(ciphertext),
-    }
-    os.makedirs(os.path.dirname(vault_path), exist_ok=True)
-    tmp_path = vault_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(envelope, f)
-    os.replace(tmp_path, vault_path)
-
-
-def _read_vault_envelope(vault_path):
-    with open(vault_path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _save_entries_locked():
+def _save_locked():
     """Caller must hold _lock and the vault must be unlocked."""
-    envelope = _read_vault_envelope(_vault_path)
-    salt = _b64d(envelope["salt"])
-    _write_vault(_vault_path, salt, _key, _entries)
+    _db.save(_vault_path)
+
+
+def _legacy_entries(path, password):
+    """Read an old vault.pmvault (PBKDF2 + AES-GCM JSON). Returns the entry
+    list, or None if the password is wrong."""
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    with open(path, "r", encoding="utf-8") as f:
+        env = json.load(f)
+    if env.get("magic") != LEGACY_MAGIC:
+        raise kdbx.KdbxError("not-kdbx")
+    b = lambda s: base64.b64decode(s.encode("ascii"))  # noqa: E731
+    key = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=b(env["salt"]),
+                     iterations=env.get("iterations", 310000)
+                     ).derive(password.encode("utf-8"))
+    try:
+        plain = AESGCM(key).decrypt(b(env["nonce"]), b(env["ciphertext"]), None)
+    except Exception:
+        return None
+    return json.loads(plain.decode("utf-8")).get("entries", [])
+
+
+def _fail_reason(err):
+    if err.code in ("wrong-password", "argon2-unavailable",
+                    "unsupported-version", "corrupt"):
+        return err.code
+    return "not-a-vault"
 
 
 def create_vault(vault_path, master_password):
-    """First-time setup: create a brand-new, empty encrypted vault
-    protected by `master_password`. Fails if a vault already exists at
-    that path (use unlock_vault instead)."""
-    global _vault_path, _entries, _key, _unlocked
+    """First-time setup: create a brand-new empty KDBX vault."""
+    global _vault_path, _db, _unlocked
     vault_path = vault_path or _default_vault_path()
+    if vault_path.endswith(".pmvault"):
+        vault_path = os.path.join(os.path.dirname(vault_path), _VAULT_FILENAME)
     with _lock:
         try:
             if os.path.isfile(vault_path):
                 pyotherside.send("vault-unlock-failed", "already-exists")
                 return
-            salt = secrets.token_bytes(16)
-            key = _derive_key(master_password, salt)
-            _write_vault(vault_path, salt, key, [])
-            _vault_path = vault_path
-            _entries = []
-            _key = key
-            _unlocked = True
+            db = kdbx.KdbxDatabase.create(master_password)
+            db.save(vault_path)
+            _vault_path, _db, _unlocked = vault_path, db, True
             pyotherside.send("vault-unlocked")
         except Exception as e:
             _emit_error("create_vault", e)
 
 
 def unlock_vault(vault_path, master_password):
-    """Decrypt the single vault file with the given master password.
-    Everything the app knows about the entries comes out of this one
-    call -- there is no separate PIN/sidecar file anymore."""
-    global _vault_path, _entries, _key, _unlocked
+    """Open the KDBX file (or migrate a legacy .pmvault) with the master
+    password."""
+    global _vault_path, _db, _unlocked
     vault_path = vault_path or _default_vault_path()
     with _lock:
         try:
-            envelope = _read_vault_envelope(vault_path)
-            if envelope.get("magic") != VAULT_MAGIC:
-                pyotherside.send("vault-unlock-failed", "not-a-vault")
+            if not os.path.isfile(vault_path):
+                pyotherside.send("vault-unlock-failed", "not-found")
                 return
-            salt = _b64d(envelope["salt"])
-            nonce = _b64d(envelope["nonce"])
-            ciphertext = _b64d(envelope["ciphertext"])
-            key = _derive_key(master_password, salt)
-            try:
-                plaintext = AESGCM(key).decrypt(nonce, ciphertext, None)
-            except Exception:
-                # Wrong password (or corrupted/tampered file) -- AES-GCM's
-                # authentication tag simply fails to verify.
-                pyotherside.send("vault-unlock-failed", "wrong-password")
-                return
-            data = json.loads(plaintext.decode("utf-8"))
-            _vault_path = vault_path
-            _entries = data.get("entries", [])
-            _key = key
-            _unlocked = True
+            if not kdbx.is_kdbx(vault_path):
+                entries = _legacy_entries(vault_path, master_password)
+                if entries is None:
+                    pyotherside.send("vault-unlock-failed", "wrong-password")
+                    return
+                new_path = os.path.join(os.path.dirname(vault_path),
+                                        _VAULT_FILENAME)
+                if os.path.isfile(new_path):
+                    pyotherside.send("vault-unlock-failed", "already-exists")
+                    return
+                db = kdbx.KdbxDatabase.create(master_password)
+                for e in entries:
+                    db.add_entry(e.get("title", ""), e.get("username", ""),
+                                 e.get("password", ""), e.get("url", ""),
+                                 e.get("notes", ""), e.get("category", ""))
+                db.save(new_path)
+                vault_path = new_path
+            else:
+                db = kdbx.KdbxDatabase.load(vault_path, master_password)
+            _vault_path, _db, _unlocked = vault_path, db, True
             pyotherside.send("vault-unlocked")
-        except FileNotFoundError:
-            pyotherside.send("vault-unlock-failed", "not-found")
+        except kdbx.KdbxError as e:
+            pyotherside.send("vault-unlock-failed", _fail_reason(e))
         except Exception as e:
             _emit_error("unlock_vault", e)
 
 
 def change_master_password(old_password, new_password):
-    """Re-encrypt the whole vault under a new master password. Requires
-    the vault to already be unlocked (so we know the entries) and the
-    caller to re-prove the *current* password, since that password is
-    the only thing standing between "change password" and "anyone with
-    the app open can silently swap it"."""
-    global _key
+    """Re-encrypt the vault under a new master password (the current one
+    must be re-entered)."""
     if not _unlocked:
         _emit_error("change_master_password", "vault-locked")
         return
     with _lock:
         try:
-            envelope = _read_vault_envelope(_vault_path)
-            salt = _b64d(envelope["salt"])
-            check_key = _derive_key(old_password, salt)
-            if not secrets.compare_digest(check_key, _key):
+            if not _db.check_password(old_password):
                 pyotherside.send("change-password-failed", "wrong-password")
                 return
-            new_salt = secrets.token_bytes(16)
-            new_key = _derive_key(new_password, new_salt)
-            _write_vault(_vault_path, new_salt, new_key, _entries)
-            _key = new_key
+            _db.set_password(new_password)
+            _save_locked()
             pyotherside.send("master-password-changed")
         except Exception as e:
             _emit_error("change_master_password", e)
 
 
 def export_vault(dest_path, vault_path=None):
-    """Copy the single encrypted vault file somewhere else (SD card,
-    Documents, a cloud-synced folder, etc.) so it survives a factory
-    reset / reinstall. This is a plain file copy -- the file is already
-    fully encrypted at rest, so this works whether or not the vault is
-    currently unlocked, and no extra step is needed to make the copy
-    "safe" to put elsewhere."""
+    """Copy the encrypted .kdbx somewhere else (SD card, Documents, a
+    synced folder ...). The copy opens in KeePass as-is."""
     vault_path = vault_path or _vault_path or _default_vault_path()
     if not os.path.isfile(vault_path):
         _emit_error("export_vault", "no-vault-to-export")
@@ -304,20 +258,22 @@ def export_vault(dest_path, vault_path=None):
 
 
 def import_vault(src_path, vault_path=None):
-    """Copy a previously-exported vault file into the app's normal vault
-    location (e.g. right after a factory reset / fresh install). This
-    only stages the file -- it does not unlock it. Call unlock_vault
-    with the master password afterwards, same as any other time."""
+    """Copy a .kdbx (from KeePass, or an app backup) into the app's vault
+    location. It is NOT unlocked here -- call unlock_vault afterwards with
+    that database's master password. An existing vault is kept as .bak."""
     vault_path = vault_path or _default_vault_path()
+    if vault_path.endswith(".pmvault"):
+        vault_path = os.path.join(os.path.dirname(vault_path), _VAULT_FILENAME)
     try:
         if not os.path.isfile(src_path):
             _emit_error("import_vault", "source-not-found")
             return
-        envelope = _read_vault_envelope(src_path)
-        if envelope.get("magic") != VAULT_MAGIC:
-            _emit_error("import_vault", "not-a-vault")
+        if not kdbx.is_kdbx(src_path):
+            _emit_error("import_vault", "not-a-kdbx-file")
             return
         os.makedirs(os.path.dirname(vault_path), exist_ok=True)
+        if os.path.isfile(vault_path):
+            shutil.copyfile(vault_path, vault_path + ".bak")
         shutil.copyfile(src_path, vault_path)
         pyotherside.send("vault-imported", vault_path)
     except Exception as e:
@@ -325,14 +281,12 @@ def import_vault(src_path, vault_path=None):
 
 
 def lock_vault():
-    """Drop the derived key and decrypted entries from memory. The vault
-    file on disk is untouched -- it was never decrypted there, only in
-    RAM -- so locking is just forgetting the key."""
-    global _unlocked, _key, _entries
+    """Forget the key and the decrypted database. The file on disk is
+    untouched."""
+    global _unlocked, _db
     with _lock:
         _unlocked = False
-        _key = None
-        _entries = []
+        _db = None
     pyotherside.send("vault-locked")
 
 
@@ -346,20 +300,12 @@ def list_entries(query=""):
         return
     query = (query or "").strip().lower()
     results = []
-    for e in _entries:
-        title = e.get("title", "")
-        username = e.get("username", "")
-        category = e.get("category", "")
-        haystack = f"{title} {username} {category}".lower()
-        if query and query not in haystack:
+    for e in _db.entries():
+        haystack = "%s %s %s" % (e["title"], e["username"], e["category"])
+        if query and query not in haystack.lower():
             continue
-        results.append({
-            "uuid": e["uuid"],
-            "title": title,
-            "username": username,
-            "url": e.get("url", ""),
-            "category": category,
-        })
+        results.append({k: e[k] for k in
+                        ("uuid", "title", "username", "url", "category")})
     results.sort(key=lambda x: x["title"].lower())
     pyotherside.send("entries-list-result", results)
 
@@ -368,7 +314,7 @@ def get_entry(uuid):
     if not _unlocked:
         _emit_error("get_entry", "vault-locked")
         return
-    entry = next((e for e in _entries if e["uuid"] == uuid), None)
+    entry = _db.get_entry(uuid)
     if entry is None:
         _emit_error("get_entry", "not-found")
         return
@@ -379,7 +325,7 @@ def get_entry_secret(uuid, field):
     if not _unlocked:
         _emit_error("get_entry_secret", "vault-locked")
         return
-    entry = next((e for e in _entries if e["uuid"] == uuid), None)
+    entry = _db.get_entry(uuid)
     if entry is None:
         _emit_error("get_entry_secret", "not-found")
         return
@@ -390,19 +336,14 @@ def add_entry(title, username, password, url, notes, category):
     if not _unlocked:
         _emit_error("add_entry", "vault-locked")
         return
-    import uuid as uuid_mod
     with _lock:
-        entry = {
-            "uuid": str(uuid_mod.uuid4()),
-            "title": title or "Untitled",
-            "username": username or "",
-            "password": password or "",
-            "url": url or "",
-            "notes": notes or "",
-            "category": (category or "General").strip() or "General",
-        }
-        _entries.append(entry)
-        _save_entries_locked()
+        try:
+            _db.add_entry(title or "Untitled", username or "", password or "",
+                          url or "", notes or "", category)
+            _save_locked()
+        except Exception as e:
+            _emit_error("add_entry", e)
+            return
     pyotherside.send("entry-saved")
 
 
@@ -411,29 +352,30 @@ def update_entry(uuid, title, username, password, url, notes, category):
         _emit_error("update_entry", "vault-locked")
         return
     with _lock:
-        entry = next((e for e in _entries if e["uuid"] == uuid), None)
-        if entry is None:
-            _emit_error("update_entry", "not-found")
+        try:
+            # empty password = keep the existing one
+            if not _db.update_entry(uuid, title, username, password, url,
+                                    notes, category):
+                _emit_error("update_entry", "not-found")
+                return
+            _save_locked()
+        except Exception as e:
+            _emit_error("update_entry", e)
             return
-        entry["title"] = title
-        entry["username"] = username
-        if password:  # only overwrite if the user actually changed it
-            entry["password"] = password
-        entry["url"] = url
-        entry["notes"] = notes
-        entry["category"] = (category or "General").strip() or "General"
-        _save_entries_locked()
     pyotherside.send("entry-saved")
 
 
 def delete_entry(uuid):
-    global _entries
     if not _unlocked:
         _emit_error("delete_entry", "vault-locked")
         return
     with _lock:
-        _entries = [e for e in _entries if e["uuid"] != uuid]
-        _save_entries_locked()
+        try:
+            _db.delete_entry(uuid)
+            _save_locked()
+        except Exception as e:
+            _emit_error("delete_entry", e)
+            return
     pyotherside.send("entry-deleted", uuid)
 
 
@@ -449,18 +391,12 @@ def make_password(length, use_upper, use_lower, use_digits, use_symbols):
 
 
 def reset_vault(vault_path, new_master_password):
-    """Wipe the vault file entirely and start over with a brand-new
-    empty vault under a new master password. Genuinely destructive --
-    unlike the old PIN-only design, there is no way to recover the old
-    entries this way if the master password is forgotten, because they
-    really were encrypted with it and nothing else. The only recovery
-    path is restoring a previously exported vault file instead."""
-    global _entries
+    """Wipe the vault file and start over with an empty one. Destructive:
+    the old entries are unrecoverable unless a backup/.bak exists."""
     vault_path = vault_path or _default_vault_path()
     try:
         if os.path.isfile(vault_path):
             os.remove(vault_path)
-        _entries = []
         create_vault(vault_path, new_master_password)
     except Exception as e:
         _emit_error("reset_vault", e)

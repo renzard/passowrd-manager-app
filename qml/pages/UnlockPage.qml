@@ -34,6 +34,12 @@ Page {
                     errorLabel.text = i18n.tr("Incorrect master password.");
                 } else if (data[1] === "not-found") {
                     errorLabel.text = i18n.tr("No vault found at that location.");
+                } else if (data[1] === "argon2-unavailable") {
+                    errorLabel.text = i18n.tr("This KeePass database uses Argon2, which isn't installed in the app. Either run tools/vendor_argon2.sh, or in KeePass switch the key derivation to AES-KDF (Database Settings > Security).");
+                } else if (data[1] === "unsupported-version") {
+                    errorLabel.text = i18n.tr("Only KDBX 4 databases are supported. In KeePass, save the database as KDBX 4.");
+                } else if (data[1] === "corrupt") {
+                    errorLabel.text = i18n.tr("The database file looks damaged or incomplete.");
                 } else if (data[1] === "already-exists") {
                     errorLabel.text = i18n.tr("A vault already exists.");
                 } else {
@@ -178,14 +184,14 @@ Page {
                     wrapMode: Text.WordWrap
                     fontSize: "small"
                     color: theme.palette.normal.backgroundSecondaryText
-                    text: i18n.tr("The vault is one encrypted file. Copy it somewhere safe before a factory reset or reinstall, then restore it afterwards -- unlocking with the same master password brings back the same entries.")
+                    text: i18n.tr("The vault is a standard KeePass (.kdbx) file. Copy your KeePass database here to open it on the phone, or save a backup to open it in KeePass on your computer. It always unlocks with the same master password.")
                 }
 
                 TextField {
                     id: backupPathField
                     width: parent.width
-                    placeholderText: i18n.tr("Backup file path, e.g. /home/phablet/Documents/vault.pmvault")
-                    text: "/home/phablet/Documents/vault.pmvault"
+                    placeholderText: i18n.tr("Backup file path, e.g. /home/phablet/Documents/vault.kdbx")
+                    text: "/home/phablet/Documents/vault.kdbx"
                     enabled: !busy
                 }
 

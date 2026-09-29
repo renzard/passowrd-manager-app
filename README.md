@@ -9,7 +9,7 @@ This project is licensed under the GNU Affero General Public License v3 or any l
 
 This app follows a KeePass-style model:
 
-- all data is stored in one encrypted file: `vault.pmvault`
+- all data is stored in one standard KeePass KDBX 4 file: `vault.kdbx`, which KeePass, KeePassXC and KeePassDX can open
 - the vault is opened with a master password
 - the master password is never stored on disk
 - the data remains portable and can be restored after reinstall or factory reset
@@ -25,22 +25,29 @@ The backend is implemented in Python, while the interface is built with QML and 
 - add, edit, and delete credential entries
 - copy username or password to clipboard with automatic clearing
 - password generator with configurable length and character classes
-- backup and restore by copying the encrypted vault file
+- backup and restore by copying the `.kdbx` file (KeePass-compatible)
 - re-encrypting the vault when changing the master password
 - local-only app design with no networking permissions
 
+## KeePass compatibility (KDBX 4)
+
+The vault is a real KeePass **KDBX 4** database, implemented in `backend/kdbx.py` on top of `python3-cryptography` only.
+
+- Copy a `.kdbx` from KeePass to the phone, use **Backup / restore -> Restore backup**, then unlock with that database's master password.
+- Copy the vault back out with **Save backup** and open it in KeePass.
+- Groups become categories (nested groups show as `Parent / Child`, entries in the root show as `General`). The Recycle Bin is hidden.
+- Only the standard fields (title, user, password, URL, notes) are edited. Custom fields, attachments, history, icons and TOTP data in the XML are kept untouched on save.
+- Every save is re-decrypted and verified before it replaces the file, and the previous version is kept as `vault.kdbx.bak`.
+- An old `vault.pmvault` from earlier versions is migrated automatically on first unlock (the old file is left in place).
+
+Supported: KDBX 4.x, AES-256 or ChaCha20 outer cipher, AES-KDF, Argon2d/Argon2id, ChaCha20 inner stream, password-only.
+Not supported: KDBX 3, key files, Salsa20 inner stream.
+
+**Argon2:** KeePass/KeePassXC default to Argon2, and `python3-cryptography` on the device cannot compute Argon2d. Either run `tools/vendor_argon2.sh` on your computer (bundles `argon2-cffi` into `vendor/`), or in KeePass change *Database Settings -> Security -> Key derivation function* to **AES-KDF**.
+
 ## Security model
 
-The vault is not stored as plaintext JSON. Instead, it is saved as a small encrypted envelope containing:
-
-- a random salt
-- a random nonce
-- AES-256-GCM ciphertext
-- PBKDF2-HMAC-SHA256 key derivation settings
-
-The master password is never written to disk. A key is derived from the password using PBKDF2-HMAC-SHA256 with 310,000 iterations, and the resulting AES key lives only in memory while the vault is unlocked.
-
-When the vault is locked, the app clears the in-memory key and decrypted entry list. The vault file itself is never decrypted in place; it remains encrypted on disk at all times.
+The file is encrypted by the KDBX format itself (AES-256/ChaCha20, HMAC-SHA256 integrity blocks, key derived from the master password with AES-KDF or Argon2). The master password is never written to disk and the derived key lives only in memory while the vault is unlocked.
 
 ## Project structure
 

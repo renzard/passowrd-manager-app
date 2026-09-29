@@ -5,8 +5,10 @@
 import QtQuick 2.7
 import Lomiri.Components 1.3
 import io.thp.pyotherside 1.5
+import Qt.labs.settings 1.0
 
 import "pages"
+import "themes"
 
 MainView {
     id: root
@@ -21,6 +23,33 @@ MainView {
     // (see backend/vault_backend.py::_default_vault_path) rather than
     // depending on QML's MainView.dataLocation.
     property bool unlocked: false
+
+    // Persisted app theme (dark/light mode and the themes page both use this)
+    Settings {
+        id: appSettings
+        property string themeName: "Lomiri.Components.Themes.Ambiance"
+    }
+    property string themeName: appSettings.themeName
+
+    // "Bitwarden" is not a Lomiri theme of its own: it is Suru Dark plus custom
+    // colours (themes/BitwardenColors.qml) and a Bitwarden-style vault layout.
+    readonly property string bitwardenThemeName: "Bitwarden"
+    readonly property bool bitwarden: themeName === bitwardenThemeName
+    theme.name: bitwarden ? "Lomiri.Components.Themes.SuruDark" : themeName
+    BitwardenColors { id: bwColors }
+
+    // Navy backdrop behind all pages when the Bitwarden theme is active
+    Rectangle {
+        z: -1
+        anchors.fill: parent
+        opacity: root.bitwarden ? 1 : 0
+        visible: opacity > 0
+        color: bwColors.background
+        Behavior on opacity { NumberAnimation { duration: 300 } }
+    }
+    function setTheme(name) {
+        appSettings.themeName = name;
+    }
 
     Python {
         id: python
@@ -52,7 +81,7 @@ MainView {
             if (data[0] === "vault-unlocked") {
                 root.unlocked = true;
                 pageStack.clear();
-                pageStack.push(Qt.resolvedUrl("pages/VaultPage.qml"), { python: python });
+                pageStack.push(Qt.resolvedUrl("pages/VaultPage.qml"), { python: python, mainView: root });
             } else if (data[0] === "vault-locked") {
                 root.unlocked = false;
                 pageStack.clear();

@@ -1,0 +1,9 @@
+{
+  "clickable_minimum_required": "8.10.0",
+  "builder": "pure",
+  "default": "arm64",
+  "dependencies_target": [
+    "python3-cryptography"
+  ],
+  "postbuild": "sh -c 'set -e; python3 -m compileall backend/'"
+}

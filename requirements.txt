@@ -1,0 +1,7 @@
+# The Click package should not vendor host-arch binary wheels here.
+# Install Python runtime deps on the target device via Clickable's
+# dependencies_target instead (see clickable.json).
+#
+# Target packages needed on Ubuntu Touch/UBports:
+# python3-pyotherside
+# python3-cryptography   (AES, ChaCha20, HMAC for the KDBX vault)

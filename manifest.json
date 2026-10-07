@@ -1,0 +1,15 @@
+{
+  "name": "my-password-manager",
+  "version": "0.1.4",
+  "title": "Password Manager",
+  "description": "A local, zero-knowledge password manager for Ubuntu Touch.",
+  "framework": "ubuntu-sdk-20.04",
+  "architecture": "@CLICK_ARCH@",
+  "maintainer": "Renzard Politakis <renzard@yourdomain.com>",
+  "hooks": {
+    "password-manager": {
+      "apparmor": "password-manager.apparmor",
+      "desktop": "password-manager.desktop"
+    }
+  }
+}

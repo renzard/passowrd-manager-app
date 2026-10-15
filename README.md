@@ -13,7 +13,7 @@ This app follows a KeePass-style model:
 - the vault is opened with a master password
 - the master password is never stored on disk
 - the data remains portable and can be restored after reinstall or factory reset
-- the app is designed for local use only and does not require network access
+- the app works fully offline; network access is only used by the optional *Site icons* feature
 
 The backend is implemented in Python, while the interface is built with QML and Ubuntu/Lomiri components. Communication between the two is handled through PyOtherSide.
 
@@ -22,12 +22,14 @@ The backend is implemented in Python, while the interface is built with QML and 
 - master password unlock / vault creation flow
 - encrypted single-file vault storage
 - searchable entries by title, username, or category
+- favorites: pin entries to the top of the list (star badge, long-press / swipe / edit page); stored as the standard KeePass tag `Favorite`, so KeePass, KeePassXC and KeePassDX show it too
 - add, edit, and delete credential entries
 - copy username or password to clipboard with automatic clearing
 - password generator with configurable length and character classes
 - backup and restore by copying the `.kdbx` file (KeePass-compatible)
 - re-encrypting the vault when changing the master password
-- local-only app design with no networking permissions
+- auto-lock: the vault locks after 1, 5 or 15 minutes of inactivity (*Settings -> Auto-lock*, default 5); *Never* turns the inactivity timer off. The vault always locks immediately when the app leaves the foreground (app switch, home screen, screen off)
+- optional website icons (off by default; the only feature that uses the network, see below)
 
 ## KeePass compatibility (KDBX 4)
 
@@ -44,6 +46,16 @@ Supported: KDBX 4.x, AES-256 or ChaCha20 outer cipher, AES-KDF, Argon2d/Argon2id
 Not supported: KDBX 3, key files, Salsa20 inner stream.
 
 **Argon2:** KeePass/KeePassXC default to Argon2, and `python3-cryptography` on the device cannot compute Argon2d. Either run `tools/vendor_argon2.sh` on your computer (bundles `argon2-cffi` into `vendor/`), or in KeePass change *Database Settings -> Security -> Key derivation function* to **AES-KDF**.
+
+## Site icons (optional)
+
+*Settings -> Site icons* shows each entry's website icon, like Bitwarden does. It is **off by default**.
+
+- When enabled, the icon is downloaded **directly from the entry's own website** over HTTPS (never from a third-party icon service) in a background thread.
+- Each site is contacted at most once: icons are cached on the device, and failures are remembered for 7 days.
+- Local / private addresses (`localhost`, `192.168.x.x`, bare IPs ...) are never contacted, redirects are only followed to public HTTPS URLs, and only PNG / ICO / JPEG / GIF images up to 256 KB are accepted (SVG is refused).
+- Without an icon, or with the feature off, the usual coloured letter tile is shown.
+- Because Ubuntu Touch permissions are fixed at install time, the package declares the `networking` policy group. Nothing is sent unless you switch the feature on. Passwords and vault data are never sent anywhere.
 
 ## Security model
 
@@ -185,7 +197,6 @@ Possible follow-ups include:
 
 - adding a proper app icon
 - improving backup path selection with file-picker integration
-- adding an inactivity auto-lock timer
 - adding unit tests for the Python backend
 
 ## License

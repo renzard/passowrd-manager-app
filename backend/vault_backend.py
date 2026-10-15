@@ -32,11 +32,15 @@ import pyotherside
 
 from password_generator import generate_password
 import kdbx
+import favicon
 
 _lock = threading.Lock()
 _db = None              # kdbx.KdbxDatabase while unlocked
 _vault_path = None
 _unlocked = False
+_icons_enabled = False   # opt-in, set from QML (Settings -> Site icons)
+_icon_dir_cache = None
+_icon_thread = None
 
 _FALLBACK_APP_NAME = "my-password-manager"
 _VAULT_FILENAME = "vault.kdbx"
@@ -183,6 +187,7 @@ def create_vault(vault_path, master_password):
             db.save(vault_path)
             _vault_path, _db, _unlocked = vault_path, db, True
             pyotherside.send("vault-unlocked")
+            _kick_icon_fetch()
         except Exception as e:
             _emit_error("create_vault", e)
 
@@ -294,6 +299,86 @@ def is_unlocked():
     return _unlocked
 
 
+# ---------------------------------------------------------------------------
+# Site icons (optional, see favicon.py)
+# ---------------------------------------------------------------------------
+
+def _icon_dir():
+    """Writable cache dir for downloaded icons ('' if none is usable)."""
+    global _icon_dir_cache
+    if _icon_dir_cache is not None:
+        return _icon_dir_cache
+    name = _app_name()
+    home = os.path.expanduser("~")
+    cands = []
+    if os.environ.get("XDG_CACHE_HOME"):
+        cands.append(os.path.join(os.environ["XDG_CACHE_HOME"], name, "site-icons"))
+    cands.append(os.path.join(home, ".cache", name, "site-icons"))
+    for d in _candidate_dirs():
+        cands.append(os.path.join(d, "site-icons"))
+    for d in cands:
+        if _dir_is_writable(d):
+            _icon_dir_cache = d
+            return d
+    _icon_dir_cache = ""
+    return ""
+
+
+def _icon_for(url):
+    """Cached icon file for this entry's URL, or '' (also '' when the
+    feature is switched off)."""
+    if not _icons_enabled:
+        return ""
+    d = _icon_dir()
+    if not d:
+        return ""
+    return favicon.cached_path(d, favicon.host_from_url(url))
+
+
+def set_icons_enabled(enabled):
+    """Called from QML at start-up and when the Settings switch changes."""
+    global _icons_enabled
+    _icons_enabled = bool(enabled)
+    if _icons_enabled and _unlocked:
+        _kick_icon_fetch()
+    pyotherside.send("icons-updated")
+
+
+def _kick_icon_fetch():
+    """Download missing icons in a background thread so unlocking and
+    scrolling are never blocked by the network."""
+    global _icon_thread
+    if not _icons_enabled or not _unlocked or _db is None:
+        return
+    if _icon_thread is not None and _icon_thread.is_alive():
+        return
+    d = _icon_dir()
+    if not d:
+        return
+    hosts = []
+    for e in _db.entries():
+        h = favicon.host_from_url(e.get("url", ""))
+        if h and h not in hosts and favicon.needs_fetch(d, h):
+            hosts.append(h)
+    if not hosts:
+        return
+
+    def work():
+        got = False
+        for h in hosts:
+            if not (_icons_enabled and _unlocked):
+                return
+            try:
+                got = favicon.fetch(d, h) or got
+            except Exception:
+                pass
+        if got and _unlocked:
+            pyotherside.send("icons-updated")
+
+    _icon_thread = threading.Thread(target=work, daemon=True)
+    _icon_thread.start()
+
+
 def list_entries(query=""):
     if not _unlocked:
         _emit_error("list_entries", "vault-locked")
@@ -304,9 +389,13 @@ def list_entries(query=""):
         haystack = "%s %s %s" % (e["title"], e["username"], e["category"])
         if query and query not in haystack.lower():
             continue
-        results.append({k: e[k] for k in
-                        ("uuid", "title", "username", "url", "category", "modified")})
-    results.sort(key=lambda x: x["title"].lower())
+        row = {k: e[k] for k in
+               ("uuid", "title", "username", "url", "category", "modified",
+                "favorite")}
+        row["icon"] = _icon_for(e["url"])
+        results.append(row)
+    # favourites are pinned to the top, then alphabetical
+    results.sort(key=lambda x: (not x["favorite"], x["title"].lower()))
     pyotherside.send("entries-list-result", results)
 
 
@@ -346,8 +435,9 @@ def get_overview():
         "secure": len(all_entries) - at_risk,
         "categories": [{"name": k, "count": v} for k, v in
                        sorted(cats.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
-        "recent": [{k: e[k] for k in ("uuid", "title", "username", "url",
-                                      "category", "modified")} for e in recent],
+        "recent": [dict({k: e[k] for k in ("uuid", "title", "username", "url",
+                                           "category", "modified", "favorite")},
+                        icon=_icon_for(e["url"])) for e in recent],
     })
 
 
@@ -373,22 +463,24 @@ def get_entry_secret(uuid, field):
     pyotherside.send("secret-ready", field, entry.get(field, "") or "")
 
 
-def add_entry(title, username, password, url, notes, category):
+def add_entry(title, username, password, url, notes, category, favorite=False):
     if not _unlocked:
         _emit_error("add_entry", "vault-locked")
         return
     with _lock:
         try:
             _db.add_entry(title or "Untitled", username or "", password or "",
-                          url or "", notes or "", category)
+                          url or "", notes or "", category, bool(favorite))
             _save_locked()
         except Exception as e:
             _emit_error("add_entry", e)
             return
     pyotherside.send("entry-saved")
+    _kick_icon_fetch()
 
 
-def update_entry(uuid, title, username, password, url, notes, category):
+def update_entry(uuid, title, username, password, url, notes, category,
+                 favorite=None):
     if not _unlocked:
         _emit_error("update_entry", "vault-locked")
         return
@@ -396,7 +488,7 @@ def update_entry(uuid, title, username, password, url, notes, category):
         try:
             # empty password = keep the existing one
             if not _db.update_entry(uuid, title, username, password, url,
-                                    notes, category):
+                                    notes, category, favorite):
                 _emit_error("update_entry", "not-found")
                 return
             _save_locked()
@@ -404,6 +496,24 @@ def update_entry(uuid, title, username, password, url, notes, category):
             _emit_error("update_entry", e)
             return
     pyotherside.send("entry-saved")
+    _kick_icon_fetch()
+
+
+def set_favorite(uuid, flag):
+    """Pin / unpin an entry (stored as the KeePass tag "Favorite")."""
+    if not _unlocked:
+        _emit_error("set_favorite", "vault-locked")
+        return
+    with _lock:
+        try:
+            if not _db.set_favorite(uuid, flag):
+                _emit_error("set_favorite", "not-found")
+                return
+            _save_locked()
+        except Exception as e:
+            _emit_error("set_favorite", e)
+            return
+    pyotherside.send("favorite-changed", uuid, bool(flag))
 
 
 def delete_entry(uuid):

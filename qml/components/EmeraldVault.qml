@@ -236,6 +236,8 @@ Item {
                 run: ev.listMode ? 1 : 0
                 uuid: modelData.uuid
                 title: modelData.title
+                iconPath: modelData.icon || ""
+                favorite: !!modelData.favorite
                 subtitle: modelData.username
                 onEntryClicked: ev.entryClicked(uuid)
                 onEntryLongPressed: ev.entryLongPressed(uuid, modelData.title, modelData.username)

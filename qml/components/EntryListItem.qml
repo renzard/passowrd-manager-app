@@ -9,23 +9,38 @@ ListItem {
     property string title
     property string username
     property string category
+    property string iconPath: ""
+    property bool showIcon: false
+    property bool favorite: false
 
     signal entryClicked(string uuid)
     signal copyUsername(string uuid)
     signal copyPassword(string uuid)
+    signal toggleFavorite(string uuid, bool pinned)
     signal entryLongPressed(string uuid, string title, string username)
 
     // Tap = open/edit the entry, press-and-hold = quick-copy dialog.
     onClicked: entryClicked(uuid)
     onPressAndHold: entryLongPressed(uuid, title, username)
 
+    SiteIcon {
+        id: siteIcon
+        visible: item.showIcon
+        anchors { left: parent.left; leftMargin: units.gu(2); verticalCenter: parent.verticalCenter }
+        width: units.gu(4.5); height: width
+        iconPath: item.iconPath
+        letter: item.title.length > 0 ? item.title.charAt(0).toUpperCase() : "?"
+        tileColor: theme.palette.normal.base
+        letterColor: theme.palette.normal.baseText
+    }
+
     Column {
         anchors {
-            left: parent.left
+            left: item.showIcon ? siteIcon.right : parent.left
             right: parent.right
             verticalCenter: parent.verticalCenter
-            leftMargin: units.gu(2)
-            rightMargin: units.gu(2)
+            leftMargin: item.showIcon ? units.gu(1.5) : units.gu(2)
+            rightMargin: item.favorite ? units.gu(5) : units.gu(2)
         }
         Label {
             text: item.title
@@ -40,8 +55,21 @@ ListItem {
         }
     }
 
+    Icon {
+        visible: item.favorite
+        anchors { right: parent.right; rightMargin: units.gu(1.8); verticalCenter: parent.verticalCenter }
+        width: units.gu(2.2); height: width
+        name: "starred"
+        color: "#f5b301"
+    }
+
     trailingActions: ListItemActions {
         actions: [
+            Action {
+                iconName: item.favorite ? "non-starred" : "starred"
+                text: item.favorite ? i18n.tr("Unpin") : i18n.tr("Pin to top")
+                onTriggered: item.toggleFavorite(item.uuid, !item.favorite)
+            },
             Action {
                 iconName: "edit-copy"
                 text: i18n.tr("Copy username")

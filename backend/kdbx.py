@@ -48,6 +48,8 @@ KDF_ARGON2ID = bytes.fromhex("9e298b1956db4773b23dfc3ec6f0a1e6")
 
 BLOCK_SIZE = 1024 * 1024
 GENERAL = "General"
+FAV_TAG = "Favorite"                 # favourites are stored as a standard KeePass tag
+_FAV_NAMES = ("favorite", "favourite")
 PATH_SEP = " / "
 
 
@@ -617,6 +619,43 @@ class KdbxDatabase:
             group = nxt
         return group
 
+    # ---- favourites (a normal KeePass tag, so KeePass/KeePassXC show it too)
+    @staticmethod
+    def _get_tags(entry):
+        raw = entry.findtext("Tags") or ""
+        return [t.strip() for t in raw.replace(",", ";").split(";") if t.strip()]
+
+    @classmethod
+    def _is_favorite(cls, entry):
+        return any(t.lower() in _FAV_NAMES for t in cls._get_tags(entry))
+
+    @classmethod
+    def _apply_favorite(cls, entry, flag):
+        tags = [t for t in cls._get_tags(entry) if t.lower() not in _FAV_NAMES]
+        if flag:
+            tags.append(FAV_TAG)
+        el = entry.find("Tags")
+        if not tags:
+            if el is not None:
+                entry.remove(el)
+            return
+        if el is None:
+            el = ET.Element("Tags")
+            times = entry.find("Times")          # keep KeePass' usual order
+            if times is not None:
+                entry.insert(list(entry).index(times), el)
+            else:
+                entry.append(el)
+        el.text = ";".join(tags)
+
+    def set_favorite(self, eid, flag):
+        _, _, e = self._find(eid)
+        if e is None:
+            return False
+        self._apply_favorite(e, bool(flag))
+        self._touch(e)        # KeePass merge/sync relies on the modified time
+        return True
+
     # ---- public entry API (same shape the QML layer already uses) ---------
     def _as_dict(self, path, e):
         return {
@@ -626,6 +665,7 @@ class KdbxDatabase:
             "password": self._get(e, "Password"),
             "url": self._get(e, "URL"),
             "notes": self._get(e, "Notes"),
+            "favorite": self._is_favorite(e),
             "category": PATH_SEP.join(path) if path else GENERAL,
             "modified": _ticks_to_unix(
                 (e.find("Times/LastModificationTime").text
@@ -639,7 +679,8 @@ class KdbxDatabase:
         _, path, e = self._find(eid)
         return None if e is None else self._as_dict(path, e)
 
-    def add_entry(self, title, username, password, url, notes, category):
+    def add_entry(self, title, username, password, url, notes, category,
+                  favorite=False):
         group = self._group_for(category)
         e = ET.SubElement(group, "Entry")
         ET.SubElement(e, "UUID").text = base64.b64encode(
@@ -647,6 +688,8 @@ class KdbxDatabase:
         ET.SubElement(e, "IconID").text = "0"
         self._touch(e, created=True)
         self._fill(e, title, username, password, url, notes)
+        if favorite:
+            self._apply_favorite(e, True)
 
     def _fill(self, e, title, username, password, url, notes):
         self._set(e, "Title", title)
@@ -657,11 +700,13 @@ class KdbxDatabase:
         self._set(e, "Notes", notes)
 
     def update_entry(self, eid, title, username, password, url, notes,
-                     category):
+                     category, favorite=None):
         group, _, e = self._find(eid)
         if e is None:
             return False
         self._fill(e, title, username, password or None, url, notes)
+        if favorite is not None:          # None = leave the tag as it is
+            self._apply_favorite(e, bool(favorite))
         self._touch(e)
         target = self._group_for(category)
         if target is not group:

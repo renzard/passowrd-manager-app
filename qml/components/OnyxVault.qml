@@ -346,6 +346,8 @@ Item {
                 run: ov.listMode ? 1 : 0
                 uuid: modelData.uuid
                 title: modelData.title
+                iconPath: modelData.icon || ""
+                favorite: !!modelData.favorite
                 subtitle: modelData.username
                 onEntryClicked: ov.entryClicked(uuid)
                 onEntryLongPressed: ov.entryLongPressed(uuid, modelData.title, modelData.username)

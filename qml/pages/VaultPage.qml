@@ -96,6 +96,8 @@ Page {
                 break;
             case "entry-saved":
             case "entry-deleted":
+            case "icons-updated":
+            case "favorite-changed":
                 refresh();
                 break;
             case "secret-ready":
@@ -117,6 +119,7 @@ Page {
             title: entryTitle
             property string entryTitle: ""
             property string entryUsername: ""
+            property bool entryFavorite: vaultPage.isFavorite(entryUuid)
             text: entryUsername
 
             Button {
@@ -136,10 +139,25 @@ Page {
                 }
             }
             Button {
+                text: quickCopyDialog.entryFavorite ? i18n.tr("Remove from favorites")
+                                                    : i18n.tr("Add to favorites (pin to top)")
+                onClicked: {
+                    python.call("vault_backend.set_favorite",
+                                [quickCopyDialog.entryUuid, !quickCopyDialog.entryFavorite]);
+                    PopupUtils.close(quickCopyDialog);
+                }
+            }
+            Button {
                 text: i18n.tr("Cancel")
                 onClicked: PopupUtils.close(quickCopyDialog)
             }
         }
+    }
+
+    function isFavorite(uuid) {
+        for (var i = 0; i < entries.length; i++)
+            if (entries[i].uuid === uuid) return !!entries[i].favorite;
+        return false;
     }
 
     function refresh() {
@@ -182,11 +200,15 @@ Page {
                 width: parent ? parent.width : 0
                 uuid: modelData.uuid
                 title: modelData.title
+                iconPath: modelData.icon || ""
+                favorite: !!modelData.favorite
+                showIcon: mainView ? mainView.siteIcons : false
                 username: modelData.username
                 category: modelData.category
                 onEntryClicked: python.call("vault_backend.get_entry", [uuid])
                 onCopyUsername: python.call("vault_backend.get_entry_secret", [uuid, "username"])
                 onCopyPassword: python.call("vault_backend.get_entry_secret", [uuid, "password"])
+                onToggleFavorite: python.call("vault_backend.set_favorite", [uuid, pinned])
                 onEntryLongPressed: PopupUtils.open(quickCopyDialogComponent, vaultPage,
                                                     { entryUuid: uuid, entryTitle: title, entryUsername: username })
             }
@@ -323,6 +345,8 @@ Page {
                     order: index
                     uuid: modelData.uuid
                     title: modelData.title
+                    iconPath: modelData.icon || ""
+                    favorite: !!modelData.favorite
                     username: modelData.username
                     category: modelData.category
                     showDivider: index < entries.length - 1
@@ -527,6 +551,8 @@ Page {
                         run: aegisContent.listMode ? 1 : 0
                         uuid: modelData.uuid
                         title: modelData.title
+                        iconPath: modelData.icon || ""
+                        favorite: !!modelData.favorite
                         username: modelData.username
                         category: modelData.category
                         showDivider: index < aegisList.count - 1

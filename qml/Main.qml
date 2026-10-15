@@ -29,9 +29,75 @@ MainView {
         id: appSettings
         property string themeName: "Aegis"
         property string displayName: ""
+        property bool siteIcons: false     // opt-in: download website icons
+        property int autoLockMinutes: 5    // inactivity timeout: 1, 5 or 15 (0 = never)
     }
     property alias displayName: appSettings.displayName
+    readonly property bool siteIcons: appSettings.siteIcons
+    function setSiteIcons(on) {
+        appSettings.siteIcons = on;
+        python.call("vault_backend.set_icons_enabled", [on]);
+    }
     property string themeName: appSettings.themeName
+
+    // ---- Auto-lock -------------------------------------------------------
+    // The vault locks after `autoLockMinutes` without touch / typing, and
+    // immediately when the app stops being the active (foreground) app.
+    // 0 = never: the inactivity timer is off. Locking when the app leaves the
+    // foreground (Qt.application.state != Active) always applies.
+    readonly property var autoLockChoices: [0, 1, 5, 15]
+    readonly property int autoLockMinutes:
+        autoLockChoices.indexOf(Number(appSettings.autoLockMinutes)) >= 0
+            ? Number(appSettings.autoLockMinutes) : 5
+    readonly property bool appActive: Qt.application.state === Qt.ApplicationActive
+
+    function setAutoLockMinutes(m) {
+        if (autoLockChoices.indexOf(m) < 0) return;
+        appSettings.autoLockMinutes = m;
+        syncAutoLock();
+    }
+    function lockNow() {
+        if (unlocked) python.call("vault_backend.lock_vault", []);
+    }
+    // (Re)start the countdown while unlocked and in the foreground, stop otherwise
+    function syncAutoLock() {
+        if (unlocked && appActive && autoLockMinutes > 0) autoLockTimer.restart();
+        else autoLockTimer.stop();
+    }
+    // Any touch or keystroke pushes the deadline back
+    function userActivity() {
+        if (unlocked && appActive && autoLockMinutes > 0) autoLockTimer.restart();
+    }
+
+    onUnlockedChanged: syncAutoLock()
+    onAppActiveChanged: {
+        if (!appActive) lockNow();      // switched app / home screen / screen off
+        syncAutoLock();
+    }
+
+    Timer {
+        id: autoLockTimer
+        interval: Math.max(1, root.autoLockMinutes) * 60 * 1000
+        repeat: false
+        onTriggered: root.lockNow()
+    }
+
+    // Sits above every page and only observes: it reports each press and then
+    // refuses it, so the press still reaches the item underneath.
+    MouseArea {
+        z: 1000
+        anchors.fill: parent
+        propagateComposedEvents: true
+        onPressed: {
+            root.userActivity();
+            mouse.accepted = false;
+        }
+    }
+    // Typing moves the text cursor, which counts as activity too
+    Connections {
+        target: Qt.inputMethod
+        onCursorRectangleChanged: root.userActivity()
+    }
 
     // "Bitwarden" is not a Lomiri theme of its own: it is Suru Dark plus custom
     // colours (themes/BitwardenColors.qml) and a Bitwarden-style vault layout.
@@ -97,6 +163,7 @@ MainView {
         Component.onCompleted: {
             addImportPath(Qt.resolvedUrl("../backend"));
             importModule("vault_backend", function () {
+                python.call("vault_backend.set_icons_enabled", [appSettings.siteIcons]);
                 python.call("vault_backend.vault_exists", [], function (exists) {
                     if (pageStack.unlockPage) {
                         pageStack.unlockPage.vaultExists = exists;

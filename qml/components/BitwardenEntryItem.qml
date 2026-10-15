@@ -14,6 +14,8 @@ Item {
     property string title
     property string username
     property string category
+    property string iconPath: ""
+    property bool favorite: false
     property bool showDivider: true
     property int order: 0          // position in the list, used to stagger the intro animation
 
@@ -60,19 +62,14 @@ Item {
         onPressAndHold: item.entryLongPressed(item.uuid, item.title, item.username)
     }
 
-    Rectangle {
+    SiteIcon {
         id: avatar
         anchors { left: parent.left; leftMargin: units.gu(2); verticalCenter: parent.verticalCenter }
         width: units.gu(5); height: width
-        radius: width / 2
-        color: item.colorFor(item.title)
-        Label {
-            anchors.centerIn: parent
-            text: item.title.length > 0 ? item.title.charAt(0).toUpperCase() : "?"
-            color: "#ffffff"
-            font.bold: true
-            fontSize: "large"
-        }
+        iconPath: item.iconPath
+        badge: item.favorite
+        letter: item.title.length > 0 ? item.title.charAt(0).toUpperCase() : "?"
+        tileColor: item.colorFor(item.title)
     }
 
     Column {

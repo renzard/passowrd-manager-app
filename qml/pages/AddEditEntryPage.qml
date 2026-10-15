@@ -20,10 +20,13 @@ Page {
     SkinColors { id: sc; skin: entryPage.skin === "" ? "onyx" : entryPage.skin }
     readonly property color labelColor: themed ? sc.secondaryText : theme.palette.normal.backgroundText
     property bool passwordRevealed: false
+    property bool favoriteChecked: false
 
     // When set, we're editing; otherwise we're creating a new entry.
     property var existingEntry: null
     readonly property bool isEditing: existingEntry !== null
+    onExistingEntryChanged: favoriteChecked = existingEntry ? !!existingEntry.favorite : false
+    Component.onCompleted: favoriteChecked = existingEntry ? !!existingEntry.favorite : false
 
     header: PageHeader {
         id: pageHeader
@@ -92,12 +95,14 @@ Page {
         if (isEditing) {
             python.call("vault_backend.update_entry", [
                 existingEntry.uuid, titleField.text, usernameField.text,
-                passwordField.text, urlField.text, notesField.text, categoryField.text
+                passwordField.text, urlField.text, notesField.text, categoryField.text,
+                entryPage.favoriteChecked
             ]);
         } else {
             python.call("vault_backend.add_entry", [
                 titleField.text, usernameField.text, passwordField.text,
-                urlField.text, notesField.text, categoryField.text
+                urlField.text, notesField.text, categoryField.text,
+                entryPage.favoriteChecked
             ]);
         }
     }
@@ -198,6 +203,40 @@ Page {
                 skin: entryPage.skin
                 text: isEditing ? existingEntry.category : ""
                 placeholderText: i18n.tr("e.g. Work, Banking, Social")
+            }
+
+            Item {
+                width: parent.width
+                height: units.gu(5)
+                Row {
+                    anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+                    spacing: units.gu(1)
+                    Icon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: units.gu(2.4); height: width
+                        name: entryPage.favoriteChecked ? "starred" : "non-starred"
+                        color: entryPage.favoriteChecked ? "#f5b301" : entryPage.labelColor
+                    }
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: i18n.tr("Favorite (pin to top)")
+                        color: entryPage.labelColor
+                        fontSize: entryPage.themed ? "small" : "medium"
+                    }
+                }
+                Switch {
+                    visible: !entryPage.themed
+                    anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                    checked: entryPage.favoriteChecked
+                    onClicked: entryPage.favoriteChecked = checked
+                }
+                ThemedSwitch {
+                    visible: entryPage.themed
+                    skin: entryPage.skin
+                    anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                    checked: entryPage.favoriteChecked
+                    onClicked: entryPage.favoriteChecked = !entryPage.favoriteChecked
+                }
             }
 
             Label { text: i18n.tr("Notes"); color: entryPage.labelColor; fontSize: entryPage.themed ? "small" : "medium" }

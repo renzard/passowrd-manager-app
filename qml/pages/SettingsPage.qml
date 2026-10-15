@@ -20,6 +20,16 @@ Page {
     readonly property bool themed: skin !== ""
     SkinColors { id: sc; skin: settingsPage.skin === "" ? "onyx" : settingsPage.skin }
 
+    // Auto-lock choices (minutes), see Main.qml
+    readonly property var autoLockOptions: [
+        { label: i18n.tr("1 min"),  value: 1  },
+        { label: i18n.tr("5 min"),  value: 5  },
+        { label: i18n.tr("15 min"), value: 15 },
+        { label: i18n.tr("Never"),  value: 0  }
+    ]
+    readonly property string autoLockSubtitle:
+        i18n.tr("Locks the vault after this much inactivity. It always locks immediately when you leave the app.")
+
     readonly property string darkTheme: "Lomiri.Components.Themes.SuruDark"
     readonly property string lightTheme: "Lomiri.Components.Themes.Ambiance"
 
@@ -62,6 +72,48 @@ Page {
                     skin: settingsPage.skin
                     checked: mainView ? (mainView.themeName === darkTheme || mainView.bitwarden || mainView.aegis || mainView.emerald || mainView.onyx) : false
                     onClicked: mainView.setTheme(checked ? lightTheme : darkTheme)
+                }
+            }
+
+            ThemedRow {
+                skin: settingsPage.skin
+                width: parent.width
+                pressable: false
+                title: i18n.tr("Site icons")
+                subtitle: i18n.tr("Downloads each site's icon from the site itself (uses internet)")
+                ThemedSwitch {
+                    skin: settingsPage.skin
+                    checked: mainView ? mainView.siteIcons : false
+                    onClicked: mainView.setSiteIcons(!mainView.siteIcons)
+                }
+            }
+
+            // Auto-lock: needs room for the selector, so it is a custom card
+            Rectangle {
+                width: parent.width
+                height: units.gu(17.4)
+                radius: sc.cardRadius
+                border.width: units.dp(1); border.color: sc.border
+                gradient: Gradient {
+                    GradientStop { position: 0; color: sc.cardTop }
+                    GradientStop { position: 1; color: sc.cardBottom }
+                }
+                Column {
+                    anchors { left: parent.left; right: parent.right; top: parent.top
+                              leftMargin: units.gu(2.2); rightMargin: units.gu(2); topMargin: units.gu(1.8) }
+                    spacing: units.gu(0.4)
+                    Label { width: parent.width; text: i18n.tr("Auto-lock"); font.bold: true
+                            fontSize: "medium"; color: sc.text }
+                    Label { width: parent.width; text: settingsPage.autoLockSubtitle
+                            fontSize: "x-small"; color: sc.secondaryText; wrapMode: Text.WordWrap }
+                }
+                ThemedSegmented {
+                    anchors { left: parent.left; right: parent.right; bottom: parent.bottom
+                              leftMargin: units.gu(1.6); rightMargin: units.gu(1.6); bottomMargin: units.gu(1.4) }
+                    skin: settingsPage.skin
+                    options: settingsPage.autoLockOptions
+                    currentValue: mainView ? mainView.autoLockMinutes : 5
+                    onPicked: mainView.setAutoLockMinutes(value)
                 }
             }
 
@@ -134,6 +186,52 @@ Page {
                     target: darkSwitch
                     property: "checked"
                     value: mainView ? (mainView.themeName === darkTheme || mainView.bitwarden || mainView.aegis || mainView.emerald || mainView.onyx) : false
+                }
+            }
+        }
+
+        // Website icons (opt-in, needs internet)
+        ListItem {
+            height: iconsLayout.height + divider.height
+            ListItemLayout {
+                id: iconsLayout
+                title.text: i18n.tr("Site icons")
+                subtitle.text: i18n.tr("Downloads each site's icon from the site itself (uses internet)")
+                Switch {
+                    id: iconsSwitch
+                    SlotsLayout.position: SlotsLayout.Trailing
+                    onClicked: mainView.setSiteIcons(checked)
+                }
+                Binding {
+                    target: iconsSwitch
+                    property: "checked"
+                    value: mainView ? mainView.siteIcons : false
+                }
+            }
+        }
+
+        // Auto-lock timeout (1 / 5 / 15 minutes)
+        ListItem {
+            height: autoLockColumn.height + units.gu(3) + divider.height
+            Column {
+                id: autoLockColumn
+                anchors { left: parent.left; right: parent.right; top: parent.top
+                          leftMargin: units.gu(2); rightMargin: units.gu(2); topMargin: units.gu(1.5) }
+                spacing: units.gu(1)
+                Label { width: parent.width; text: i18n.tr("Auto-lock"); fontSize: "medium" }
+                Label {
+                    width: parent.width
+                    text: settingsPage.autoLockSubtitle
+                    fontSize: "small"
+                    color: theme.palette.normal.backgroundSecondaryText
+                    wrapMode: Text.WordWrap
+                }
+                ThemedSegmented {
+                    width: parent.width
+                    skin: ""
+                    options: settingsPage.autoLockOptions
+                    currentValue: mainView ? mainView.autoLockMinutes : 5
+                    onPicked: mainView.setAutoLockMinutes(value)
                 }
             }
         }

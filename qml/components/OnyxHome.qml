@@ -248,6 +248,8 @@ Flickable {
                     run: home.playCount
                     uuid: modelData.uuid
                     title: modelData.title
+                    iconPath: modelData.icon || ""
+                    favorite: !!modelData.favorite
                     subtitle: modelData.url || modelData.username
                     onEntryClicked: home.entryClicked(uuid)
                     onEntryLongPressed: home.entryLongPressed(uuid, modelData.title, modelData.username)

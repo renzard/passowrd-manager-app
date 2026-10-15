@@ -12,6 +12,8 @@ Item {
     property string uuid: ""
     property string title: ""
     property string subtitle: ""
+    property string iconPath: ""
+    property bool favorite: false
     property int order: 0
     property int run: 1
 
@@ -38,17 +40,15 @@ Item {
         scale: area.pressed ? 0.98 : 1
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
-        Rectangle {
+        SiteIcon {
             id: tile
             anchors { left: parent.left; leftMargin: units.gu(1.6); verticalCenter: parent.verticalCenter }
-            width: units.gu(5.2); height: width; radius: units.gu(1.5)
-            color: c.tile
-            Label {
-                anchors.centerIn: parent
-                text: item.title.length ? item.title.charAt(0).toUpperCase() : "?"
-                font.bold: true; fontSize: "large"
-                color: c.accent
-            }
+            width: units.gu(5.2); height: width; corner: units.gu(1.5)
+            iconPath: item.iconPath
+            badge: item.favorite
+            letter: item.title.length ? item.title.charAt(0).toUpperCase() : "?"
+            tileColor: c.tile
+            letterColor: c.accent
         }
         Column {
             anchors { left: tile.right; leftMargin: units.gu(1.6); right: parent.right
